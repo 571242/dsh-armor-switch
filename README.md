@@ -94,6 +94,12 @@ node .\scripts\verify.mjs
 该脚本会在假 Cordis 上下文里跑完整套断言（隐身性、注册位置、RPC、幂等、降级路径），
 **无需真实宿主即可运行**，29 项断言全绿即为通过。
 
+若还要验证**安装脚本本身**（它写进 profile 的 patch 必须是合法 YAML）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-installer.ps1
+```
+
 ---
 
 ## 它做对了什么
@@ -270,7 +276,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\uninstall.ps1
 ├── scripts/
 │   ├── install.ps1         幂等安装
 │   ├── uninstall.ps1       完整回滚
-│   └── verify.mjs          离线自检（29 项断言，无需真实宿主）
+│   ├── verify.mjs          离线自检（29 项断言，无需真实宿主）
+│   └── verify-installer.ps1 安装脚本回归（生成的 patch 必须是合法 YAML）
 ├── docs/
 │   ├── ARCHITECTURE.md     设计深挖：为什么是这三个注册面
 │   └── TROUBLESHOOTING.md  故障排查

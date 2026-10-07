@@ -52,6 +52,46 @@
 - **locale 文案与实际行为不符**：`fullAccessTitleOn/Off` 仍写着旧的
   「点击恢复 workspace-write」，与 A7 修复后的「恢复 profile 默认预设」不一致。已更正中英文两处。
 
+- **安装脚本生成的 YAML 缩进非法（严重，已定位并修复）**：
+  `New-OverrideBlock` 用手写字符串字面量拼缩进，实际**多打了一个空格**，
+  生成 3/5 空格缩进的块：
+
+  ```yaml
+  - id: armor-switch
+     name: 'dsh-armor-switch'     # 3 空格 —— 非法
+     config:
+       enabled: false             # 5 空格
+  ```
+
+  这在 YAML 里是**非法**的，宿主用的 `js-yaml` 直接报
+  `bad indentation of a mapping entry (4:8)`：
+
+  ```
+  FAIL 3-space block :: bad indentation of a mapping entry (4:8)
+  OK   2-space block :: {"id":"armor-switch","name":"dsh-armor-switch","config":{...}}
+  ```
+
+  后果：**全新安装会写入一个解析失败的 patch，插件静默不加载**。
+  最阴险的是它有分支依赖 —— 已有 profile 走「就地规整 config」分支，
+  根本不触发这段代码，所以**只在全新安装时炸**，作者本机永远复现不到。
+
+  修复：
+  1. 缩进改由字符码相乘生成（`$SP = [string][char]32`、`$SP * 2` / `$SP * 4`），
+     宽度由数字决定，改不动也数不错；
+  2. 生成后**立即自检**缩进宽度，不等于 `0,2,2,4,4` 就 `throw`，
+     绝不把坏 YAML 写进 profile。
+
+  回归保护：新增 `scripts/verify-installer.ps1`，在临时 profile 上真跑一遍全新安装，
+  断言缩进宽度为 `0,2,2,4,4`、追加字节数恰为 97，并用真 `js-yaml` 解析整份文件。
+  该脚本已接入 CI。
+
+  同时顺带修掉：`robocopy` 现在排除 `.git` / `node_modules` / `.github` / `*.bak*`，
+  避免从 clone 的仓库安装时把版本库拷进 profile。
+  另外给安装脚本加了「自删保护」：当仓库恰好位于默认中转目录
+  （`~/.dsh/plugins/dsh-armor-switch`，也正是 README 建议的 clone 目标）时，
+  原逻辑会先 `Remove-DirSafely` 该目录 —— **把用户刚 clone 的仓库连 `.git` 一起删掉**。
+  现在改为原地安装，路径冲突时直接拒绝执行并给出正确命令。
+
 ### Known limitations
 
 - `minimal` 预设下本插件**完全不生效**（该 persona 同时声明 `complete: true` 与

@@ -97,6 +97,12 @@ node .\scripts\verify.mjs
 Runs the whole assertion suite against a fake Cordis context — **no live host required.**
 29 assertions; all green means the build is sound.
 
+To also validate the **installer itself** (the profile patch it writes must be valid YAML):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-installer.ps1
+```
+
 ---
 
 ## What it gets right
@@ -284,7 +290,8 @@ cleaned. **It does not delete** `~/.dsh/plugins/dsh-armor-switch` unless you pas
 ├── scripts/
 │   ├── install.ps1         idempotent install
 │   ├── uninstall.ps1       full rollback
-│   └── verify.mjs          offline self-check (29 assertions, no live host needed)
+│   ├── verify.mjs          offline self-check (29 assertions, no live host needed)
+│   └── verify-installer.ps1 installer regression (the generated patch must be valid YAML)
 ├── docs/
 │   ├── ARCHITECTURE.md     design deep-dive: why these three registration surfaces
 │   └── TROUBLESHOOTING.md  troubleshooting

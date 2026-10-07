@@ -237,11 +237,18 @@ function Set-ArmorConfigValues {
 function New-OverrideBlock([bool]$EnabledValue, [bool]$FullValue, [string]$Nl) {
     $ev = $EnabledValue.ToString().ToLower()
     $fv = $FullValue.ToString().ToLower()
-    # 用 here-string 固化缩进：2 空格为子键、4 空格为 config 的子键。
-    # YAML 对缩进敏感，这里必须与 profile 既有风格一致（否则 js-yaml 会报
-    # "bad indentation of a mapping entry"）。
-    $i2 = '  '
-    $i4 = '    '
+
+    # 缩进必须由字符码生成，不能手打字面量。
+    # 教训：本函数早期版本写了 "  name: ..." 这样的字面量，实际多打了一个空格，
+    # 生成 3 空格缩进；YAML 亲缘层级因此错位，js-yaml 直接报
+    #   "bad indentation of a mapping entry"
+    # 于是全新安装会写入一个解析失败的 patch —— 插件静默不加载，且现场很难看出来
+    # （旧 profile 走「就地规整」分支，不触发这条路径，所以只在全新安装时炸）。
+    # 用 [char]32 相乘，宽度由数字决定，改不动也数不错。
+    $SP = [string][char]32
+    $i2 = $SP * 2   # name / config 的缩进
+    $i4 = $SP * 4   # enabled / fullAccess 的缩进
+
     $lines = @(
         '- id: armor-switch',
         ($i2 + "name: 'dsh-armor-switch'"),
@@ -249,7 +256,22 @@ function New-OverrideBlock([bool]$EnabledValue, [bool]$FullValue, [string]$Nl) {
         ($i4 + 'enabled: ' + $ev),
         ($i4 + 'fullAccess: ' + $fv)
     )
-    return (($lines -join $Nl) + $Nl)
+    $block = (($lines -join $Nl) + $Nl)
+
+    # 自检：生成后立刻量一遍缩进宽度，不对就抛错，绝不把坏 YAML 写进 profile。
+    $widths = @()
+    foreach ($line in ($block -split "`r?`n")) {
+        if ($line.Length -eq 0) { continue }
+        $w = 0
+        foreach ($ch in $line.ToCharArray()) { if ($ch -eq ' ') { $w++ } else { break } }
+        $widths += $w
+    }
+    $expected = @(0, 2, 2, 4, 4)
+    if (($widths -join ',') -ne ($expected -join ',')) {
+        throw ("armor-switch: 生成的 patch 块缩进异常（得到 [$($widths -join ',')]，期望 [$(($expected -join ','))]）。" +
+               '已中止，未写入 profile。')
+    }
+    return $block
 }
 
 # 清除历史遗留的 armor-switch 顶层 insert 块（旧版脚本写过；留着就会造成同 id 两行）。
