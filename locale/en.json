@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "title": "Armor switch",
+    "description": "A one-click delivery-contract toggle: off is byte-identical to the stock prompt, on rewrites the underlying contract (no host file is ever modified)."
+  },
+  "chipOn": "Armor on",
+  "chipOff": "Armor off",
+  "chipTitleOn": "Armor is on. Click to switch off; the next request reverts to stock.",
+  "chipTitleOff": "Armor is off (byte-identical to stock). Click to switch on.",
+  "fullAccessOn": "Full",
+  "fullAccessOff": "Full",
+  "fullAccessTitleOn": "Full access on: danger-full-access, approval never. Click to restore this profile's default preset.",
+  "fullAccessTitleOff": "Full access off (this profile's default preset is restored). Click for danger-full-access with approval never.",
+  "busy": "Switching…",
+  "contractLabel": "contract",
+  "unavailable": "Host switch unavailable (connection not ready); it can currently be driven only through cordis.patch.yml's enabled flag."
+}

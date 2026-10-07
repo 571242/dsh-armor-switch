@@ -1,0 +1,37 @@
+name: verify
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: 离线自检（node ${{ matrix.node }}）
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: 语法检查（宿主半 / 客户端半）
+        shell: pwsh
+        run: |
+          node --check src/index.js
+          node --check src/client.js
+
+      - name: 运行离线自检套件
+        shell: pwsh
+        run: node scripts/verify.mjs
+
+      - name: package.json 必须是合法 JSON
+        shell: pwsh
+        run: node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')"

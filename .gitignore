@@ -1,0 +1,28 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+*.tgz
+
+# 安装脚本的备份文件
+*.bak-*
+*.bak
+
+# 日志与临时文件
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*~
+
+# 本机私有配置（绝对不要提交）
+local.properties
+.env
+.env.*
+!.env.example

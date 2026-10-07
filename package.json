@@ -1,0 +1,36 @@
+{
+  "name": "dsh-armor-switch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "armor-switch: a tiny, always-toggleable delivery-contract plugin for DeepSeek Harness. Off = byte-identical to the stock prompt; on = three lazy registrations rewrite the contract for the next assembly.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./client.js": "./src/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml",
+    "locale",
+    "README.md"
+  ],
+  "dsh": {
+    "id": "armor-switch",
+    "name": "破甲开关",
+    "version": "1.0.0",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

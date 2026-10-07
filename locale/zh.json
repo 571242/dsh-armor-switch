@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "title": "破甲开关",
+    "description": "一键开关的交付契约插件：关闭时与官方提示词逐字节一致，开启时改写底层系统（不修改任何宿主文件）。"
+  },
+  "chipOn": "破甲 开",
+  "chipOff": "破甲 关",
+  "chipTitleOn": "破甲已开启。点击关闭，下一次请求即恢复官方提示词。",
+  "chipTitleOff": "破甲已关闭（与官方逐字节一致）。点击开启，下一次请求即生效。",
+  "fullAccessOn": "全权",
+  "fullAccessOff": "全权",
+  "fullAccessTitleOn": "全权已开启：沙箱 danger-full-access、审批 never。点击恢复该 profile 配置的默认预设。",
+  "fullAccessTitleOff": "全权已关闭（已恢复该 profile 的默认预设）。点击切到 danger-full-access + 审批 never。",
+  "busy": "切换中…",
+  "contractLabel": "契约",
+  "unavailable": "宿主开关不可用（connection 未就绪），当前只能通过 cordis.patch.yml 的 enabled 生效。"
+}

@@ -1,0 +1,51 @@
+# armor-switch bundle layer: one insert row carrying both halves.
+#
+#   host   half: /armor-switch private RPC channel + the three lazy prompt
+#                registrations (this package's src/index.js, row id armor-switch).
+#   client half: the composer dock chip (this package's src/client.js, wired by
+#                the package-level `dsh.client` manifest and the `./client`
+#                export).
+#
+# `dsh.client` is a PACKAGE-level declaration, not a row-level one, so this
+# bundle needs exactly one insert row. A second row would run apply() twice.
+#
+# `name` must be the real package name: cordis imports the package by it.
+
+# ── REQUIRED: give Connection the webServer service ──────────────────────────
+#
+# The chip talks to this plugin's host half over a PRIVATE Connection RPC
+# channel. Connection registers such a channel with
+#
+#   owner.effect(() => owner.webServer.register(route))
+#     — @deepseek-ai/dsh-client-connection/lib/index.js:656
+#
+# where `owner` is Connection's OWN context (`const owner = this.ctx`, :574).
+# Connection therefore cannot mount a private channel unless `webServer` is
+# available to it. The shipped dsh-web-app layer declares only
+#
+#   - id: connection
+#     inject: [webRuntime]      # no webServer
+#
+# and its own `ctx.inject(["webServer"], ...)` (:820) covers only the shared
+# `/api` route, not the private registry. So WITHOUT this override the private
+# channel never mounts: `POST /armor-switch/<endpoint>` answers 405 while a
+# registered channel answers 401, and the chip shows a permanent error.
+#
+# Do NOT delete this block. It is self-contained (it does not depend on any
+# other plugin's patch) and harmless for Connection itself.
+#
+# A patch replaces the targeted row's WHOLE `config`, so it is repeated here
+# verbatim from the web-app layer; only `inject` gains `webServer`. Same shape
+# the dsh-unrestricted bundle used.
+- id: connection
+  name: '@deepseek-ai/dsh-client-connection'
+  inject: [webRuntime, webServer]
+  config:
+    trustedHosts: !!js ctx.webRuntime.trustedHosts
+
+- insert:
+    - id: armor-switch
+      name: 'dsh-armor-switch'
+      config:
+        enabled: false
+        fullAccess: false
