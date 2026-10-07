@@ -19,9 +19,9 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
-import { registerHooks } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..')
@@ -57,18 +57,51 @@ check('V2.1', 'package.json 关键字段', pkg.name === 'dsh-armor-switch' && pk
   `dsh.id=${pkg.dsh?.id} patch=${pkg.dsh?.bundle?.patch}`)
 
 // ── 3. schemastery stub（让模块能在宿主之外导入）────────────────────────────
-const STUB = 'data:text/javascript;charset=utf-8,' + encodeURIComponent(`
-function mk(l){const f=function(){return mk(l+'()')};return new Proxy(f,{
+//
+// 为什么不用 `registerHooks`（曾导致 CI 在 Node 20 上失败）：
+//   node:module 的 registerHooks 需要 Node 22.15+ / 23.5+，Node 20 会直接报
+//     SyntaxError: The requested module 'node:module' does not provide an export named 'registerHooks'
+//   —— 注意这是**静态 import 的链接期错误**，连 try/catch 都拦不住。
+//
+// 改用「真实桩包 + 临时 node_modules」：Node 原生解析器自己就会找到它，
+// 零 hook、零新 API，20 / 22 / 24 全版本通用。
+const STUB_NAME = '@deepseek-ai/schemastery'
+const STUB_SRC = `function mk(l){const f=function(){return mk(l+'()')};return new Proxy(f,{
   get(t,p){if(p==='then')return undefined;if(typeof p==='symbol')return undefined;return mk(l+'.'+String(p))},
   apply(){return mk(l+'()')},construct(){return mk(l+'{}')},has(){return true}})}
 export default mk('z');
-`)
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier === '@deepseek-ai/schemastery') return { url: STUB, shortCircuit: true }
-    return nextResolve(specifier, context)
-  },
-})
+`
+
+/**
+ * 在临时目录里搭一个能 import 插件的沙箱：
+ *   <tmp>/package.json          {"type":"module"}
+ *   <tmp>/index.js              被测插件的副本
+ *   <tmp>/node_modules/@deepseek-ai/schemastery/   桩包
+ *
+ * 这样 `import '@deepseek-ai/schemastery'` 会被 Node 原生解析到桩包，
+ * 完全不需要 loader hook。
+ *
+ * `type: module` 是必需的：被测文件是 .js，没有这个声明 Node 会按 CommonJS
+ * 解析，报 "Cannot use import statement outside a module"。
+ *
+ * @param {string} srcFile - 要 import 的源文件绝对路径。
+ * @returns 沙箱的 file:// URL（用后应调用 dispose）。
+ */
+function makeSandbox(srcFile) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'armor-verify-'))
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ type: 'module' }))
+
+  const pkgDir = path.join(root, 'node_modules', ...STUB_NAME.split('/'))
+  fs.mkdirSync(pkgDir, { recursive: true })
+  fs.writeFileSync(path.join(pkgDir, 'package.json'), JSON.stringify({
+    name: STUB_NAME, version: '0.0.0-stub', type: 'module', main: './index.js', exports: './index.js',
+  }))
+  fs.writeFileSync(path.join(pkgDir, 'index.js'), STUB_SRC)
+
+  const target = path.join(root, path.basename(srcFile))
+  fs.copyFileSync(srcFile, target)
+  return { root, url: pathToFileURL(target).href }
+}
 
 /**
  * 构造一个假 Cordis 上下文。
@@ -106,7 +139,8 @@ function makeCtx(overrides = {}, agents = [{ session: { id: 's1' } }]) {
   return ctx
 }
 
-const mod = await import('file:///' + INDEX.replace(/\\/g, '/'))
+const sandbox = makeSandbox(INDEX)
+const mod = await import(sandbox.url)
 
 // ── 4. apply 与注册面 ───────────────────────────────────────────────────────
 const ctx = makeCtx()
@@ -284,4 +318,8 @@ console.log('\n' + '═'.repeat(72))
 console.log(`contract fingerprint = ${mod.contractFingerprint()}`)
 console.log(`verify: ${failures === 0 ? 'ALL-PASS' : failures + ' FAILURE(S)'}`)
 console.log('═'.repeat(72))
+
+// 清掉沙箱临时目录，避免每次运行都留一个
+try { fs.rmSync(sandbox.root, { recursive: true, force: true }) } catch { /* 清理失败不影响结论 */ }
+
 process.exit(failures === 0 ? 0 : 1)

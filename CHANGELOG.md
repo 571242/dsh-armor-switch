@@ -45,6 +45,31 @@
 
   回归保护：`scripts/verify.mjs` 的 A7 断言组会断言「主开关往返 6 次，权限写入恒为 0 次」。
 
+- **`verify.mjs` 在 Node 20 上无法运行（CI 真实失败，已修）**：
+  自检脚本用 `node:module` 的 `registerHooks` 给 `@deepseek-ai/schemastery` 打桩，
+  但该 API **需要 Node 22.15+ / 23.5+**。CI 的 Node 20 作业直接失败：
+
+  ```
+  SyntaxError: The requested module 'node:module' does not provide an export named 'registerHooks'
+      at file:///.../scripts/verify.mjs:22
+  ```
+
+  值得注意的是这是**静态 import 的链接期错误**，连 `try/catch` 都拦不住 ——
+  脚本在 Node 20 上根本跑不到第一行断言。本机是 Node 24，所以一直没暴露。
+
+  修复：改用「真实桩包 + 临时 `node_modules`」。在临时目录里放好
+  `@deepseek-ai/schemastery` 的桩实现与一份 `{"type":"module"}`，
+  再 `import()` 插件副本 —— Node 原生解析器自己就会找到桩包，
+  **零 loader hook、零高版本 API**。
+
+  顺带修掉两个连带问题：
+  1. 临时目录缺 `{"type":"module"}` 时，Node 会按 CommonJS 解析被 import 的 `.js`，
+     报 `Cannot use import statement outside a module`；
+  2. 早期实现没有清理逻辑，每次运行都会在 `%TEMP%` 留一个目录。
+
+  验证：Node **20.18.0 / 22.11.0 / 24.19.0** 三版本均 **29/29 PASS**，
+  契约指纹一致（`a7db2da33b564f7a`）。
+
 - **动态样式生命周期**：`ensureStyles()` 原本在 `apply()` 顶层同步调用，而卸载清理挂在
   `ctx.effect` 的返回闭包里，上下文重建时会出现「样式被清掉但不再注入」。
   现已把注入与清理成对收进同一个 `ctx.effect`，并加上 `tag.parentNode` 判空。
