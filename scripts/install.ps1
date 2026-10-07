@@ -101,7 +101,12 @@ function Remove-DirSafely([string]$p) {
 }
 
 function Invoke-RobocopyCopy([string]$src, [string]$dst) {
-    & robocopy $src $dst /E /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    # /XD 排除版本控制与构建目录：从 clone 的仓库安装时，不能把 .git 一起拷进
+    # profile 的 node_modules（既无意义，又可能被宿主扫描）以及安装备份文件。
+    # /XF 排除脚本产生的 *.bak-* 与 *.bak。
+    & robocopy $src $dst /E /NFL /NDL /NJH /NJS /NC /NS `
+        /XD '.git' 'node_modules' '.github' `
+        /XF '*.bak' '*.bak-*' | Out-Null
     $rc = $LASTEXITCODE
     return $rc
 }
