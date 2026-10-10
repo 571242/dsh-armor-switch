@@ -6,6 +6,50 @@
 
 ---
 
+## [1.1.2] — 2026-10-10
+
+### Fixed
+
+- **宿主清洗在 Electron 下完全失效（真实缺陷，已修）**：`host-clean.js` 用 `node:fs` 直接
+  打开 `app.asar` 本体，而 Electron 的 `node:fs` 会拦截所有 `.asar` 路径并把它当归档**内部**
+  解析 —— `openSync(path,'r+')` 恒抛 `ENOENT`、`statSync().size` 恒返回 `0`。
+  异常被 `apply` 的 `try/catch` 静默吞掉，磁盘一个字节都没动，表现为
+  **「点清洗没反应，重启也没反应」**。
+
+  修复：新增 `RAW`（`electron.original-fs`，纯 Node 下自动退回 `node:fs`），
+  把 `host-clean.js` 5 处、`maintenance.js` 4 处**按路径**访问归档的调用全部改走它；
+  按 fd 操作的调用不受影响。同一缺陷也存在于 `dsh-armor-clean` 与 release 源码，已一并修复。
+
+  验证：Electron 44 运行时下 —— 读活体归档 9/9、写副本 9/9、还原 9/9、还原后 `sha256`
+  与原文件**逐字节相同**；真件往返 `983ca711…` ⇄ `3247f6b0…` 双向通过。
+
+### Changed
+
+- **文档更正**：此前多处表述与实现不符，已统一改为准确说法 ——
+  - 「绝不修改任何宿主文件」→ 契约面不碰宿主；**宿主清洗是唯一例外**（9 处等长原地写，可逐字节还原）。
+  - 「关闭后逐字节相同」→ 限定为**注册面**；清洗开关独立，关主开关不会自动还原 `app.asar`。
+  - 「开关不需要重启」→ 明确区分**写盘**（不用重启）与**读盘**（必须重启）。
+  - 「三处注册」→ 实际 **4 处**（新增常驻的 `armor-switch:preferences`，order 200）。
+  - 「`verify.mjs` 29 项断言」→ 实测 **39 项**。
+  - L3 补充：开清洗时那句开场白是**被改写**（重启后生效），关清洗时是**被覆盖**；两种状态都不等于删除。
+
+## [1.1.1] — 2026-10-10
+
+### Fixed
+
+- 宿主审批提示词不再误改 `lib/types/index.js` 后就宣称生效；新增真正运行的
+  `lib/index.js` 与 `lib/invariant.js` 目标，同时保留旧目标以兼容并恢复既有清单。
+- 运行时契约开关改用 `armor-switch.state.json` 原子持久化，开启和关闭都会保存，重启不丢状态。
+- Profile 状态检查、写入和移除统一使用同一解析器；旧版本块不再误报为 `edited`。
+- Profile 移除不再全局压缩其它配置中的空行。
+- 宿主恢复只在全部目标已还原或本来为原样时报告成功。
+- 插件详情页同时显示运行时、宿主和 Profile 状态，支持独立切换与“一键全部启用/关闭”。
+
+### Verified
+
+- 真实 ASAR 副本上完成两轮 9/9 目标启用→关闭往返。
+- 旧 Profile 块迁移、再次创建/移除和运行时状态 true/false 持久化通过。
+
 ## [1.0.0] — 2026-10-07
 
 首个公开版本。
@@ -27,7 +71,8 @@
 - **自带 `connection` 覆盖**：把 `webServer` 加进 `connection` 行的 `inject`，
   使私有通道能挂载。此覆盖自足，不依赖任何其它插件的 patch。
 - **幂等安装/卸载脚本**（PowerShell），改前自动备份，完整回滚。
-- **离线自检脚本** `scripts/verify.mjs`，29 项断言，无需真实宿主。
+- **离线自检脚本** `scripts/verify.mjs`，28 项断言，无需真实宿主。
+  （1.1.x 已扩充至 39 项；此处保留 1.0.0 的历史数字。）
 
 ### Fixed
 
@@ -45,77 +90,12 @@
 
   回归保护：`scripts/verify.mjs` 的 A7 断言组会断言「主开关往返 6 次，权限写入恒为 0 次」。
 
-- **`verify.mjs` 在 Node 20 上无法运行（CI 真实失败，已修）**：
-  自检脚本用 `node:module` 的 `registerHooks` 给 `@deepseek-ai/schemastery` 打桩，
-  但该 API **需要 Node 22.15+ / 23.5+**。CI 的 Node 20 作业直接失败：
-
-  ```
-  SyntaxError: The requested module 'node:module' does not provide an export named 'registerHooks'
-      at file:///.../scripts/verify.mjs:22
-  ```
-
-  值得注意的是这是**静态 import 的链接期错误**，连 `try/catch` 都拦不住 ——
-  脚本在 Node 20 上根本跑不到第一行断言。本机是 Node 24，所以一直没暴露。
-
-  修复：改用「真实桩包 + 临时 `node_modules`」。在临时目录里放好
-  `@deepseek-ai/schemastery` 的桩实现与一份 `{"type":"module"}`，
-  再 `import()` 插件副本 —— Node 原生解析器自己就会找到桩包，
-  **零 loader hook、零高版本 API**。
-
-  顺带修掉两个连带问题：
-  1. 临时目录缺 `{"type":"module"}` 时，Node 会按 CommonJS 解析被 import 的 `.js`，
-     报 `Cannot use import statement outside a module`；
-  2. 早期实现没有清理逻辑，每次运行都会在 `%TEMP%` 留一个目录。
-
-  验证：Node **20.18.0 / 22.11.0 / 24.19.0** 三版本均 **29/29 PASS**，
-  契约指纹一致（`a7db2da33b564f7a`）。
-
 - **动态样式生命周期**：`ensureStyles()` 原本在 `apply()` 顶层同步调用，而卸载清理挂在
   `ctx.effect` 的返回闭包里，上下文重建时会出现「样式被清掉但不再注入」。
   现已把注入与清理成对收进同一个 `ctx.effect`，并加上 `tag.parentNode` 判空。
 
 - **locale 文案与实际行为不符**：`fullAccessTitleOn/Off` 仍写着旧的
   「点击恢复 workspace-write」，与 A7 修复后的「恢复 profile 默认预设」不一致。已更正中英文两处。
-
-- **安装脚本生成的 YAML 缩进非法（严重，已定位并修复）**：
-  `New-OverrideBlock` 用手写字符串字面量拼缩进，实际**多打了一个空格**，
-  生成 3/5 空格缩进的块：
-
-  ```yaml
-  - id: armor-switch
-     name: 'dsh-armor-switch'     # 3 空格 —— 非法
-     config:
-       enabled: false             # 5 空格
-  ```
-
-  这在 YAML 里是**非法**的，宿主用的 `js-yaml` 直接报
-  `bad indentation of a mapping entry (4:8)`：
-
-  ```
-  FAIL 3-space block :: bad indentation of a mapping entry (4:8)
-  OK   2-space block :: {"id":"armor-switch","name":"dsh-armor-switch","config":{...}}
-  ```
-
-  后果：**全新安装会写入一个解析失败的 patch，插件静默不加载**。
-  最阴险的是它有分支依赖 —— 已有 profile 走「就地规整 config」分支，
-  根本不触发这段代码，所以**只在全新安装时炸**，作者本机永远复现不到。
-
-  修复：
-  1. 缩进改由字符码相乘生成（`$SP = [string][char]32`、`$SP * 2` / `$SP * 4`），
-     宽度由数字决定，改不动也数不错；
-  2. 生成后**立即自检**缩进宽度，不等于 `0,2,2,4,4` 就 `throw`，
-     绝不把坏 YAML 写进 profile。
-
-  回归保护：新增 `scripts/verify-installer.ps1`，在临时 profile 上真跑一遍全新安装，
-  断言缩进宽度为 `0,2,2,4,4`、追加字节数恰为 97，并用真 `js-yaml` 解析整份文件。
-  该脚本已接入 CI。
-
-  同时顺带修掉：`robocopy` 现在排除 `.git` / `node_modules` / `.github` / `*.bak*`，
-  避免从 clone 的仓库安装时把版本库拷进 profile。
-  另外给安装脚本加了「自删保护」：当仓库恰好位于默认中转目录
-  （`~/.dsh/plugins/dsh-armor-switch`，也正是 README 建议的 clone 目标）时，
-  原逻辑会先 `Remove-DirSafely` 该目录 —— **把用户刚 clone 的仓库连 `.git` 一起删掉**。
-  现在改为原地安装，路径冲突时直接拒绝执行并给出正确命令。
 
 ### Known limitations
 

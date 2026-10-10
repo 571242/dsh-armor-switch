@@ -32,6 +32,12 @@ jobs:
         shell: pwsh
         run: node scripts/verify.mjs
 
+      - name: 维护与恢复回归（临时夹具，校验指令原文不变）
+        shell: pwsh
+        run: |
+          node tests/maintenance.mjs
+          node tests/preferences.mjs
+
       - name: 安装脚本回归（生成的 patch 必须是合法 YAML）
         shell: pwsh
         run: pwsh -NoProfile -File ./scripts/verify-installer.ps1

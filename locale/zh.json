@@ -1,12 +1,12 @@
 {
   "meta": {
     "title": "破甲开关",
-    "description": "一键开关的交付契约插件：关闭时与官方提示词逐字节一致，开启时改写底层系统（不修改任何宿主文件）。"
+    "description": "可逆的交付契约开关：运行时热切换即时生效；宿主清洗写盘即时、模型读到需重启；Profile 清洗下一次新会话生效。"
   },
   "chipOn": "破甲 开",
   "chipOff": "破甲 关",
-  "chipTitleOn": "破甲已开启。点击关闭，下一次请求即恢复官方提示词。",
-  "chipTitleOff": "破甲已关闭（与官方逐字节一致）。点击开启，下一次请求即生效。",
+  "chipTitleOn": "破甲已开启。点击关闭，下一次请求即恢复官方注册面（约需下一次请求生效）。",
+  "chipTitleOff": "破甲已关闭（注册面与官方逐字节一致）。点击开启，下一次请求即生效。",
   "fullAccessOn": "全权",
   "fullAccessOff": "全权",
   "fullAccessTitleOn": "全权已开启：沙箱 danger-full-access、审批 never。点击恢复该 profile 配置的默认预设。",

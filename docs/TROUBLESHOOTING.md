@@ -14,6 +14,8 @@
 | 装完重启，DSH 起不来 / 插件加载报错 | 用了 junction 而不是真实拷贝 | [T3](#t3-模块解析失败-err_module_not_found) |
 | 芯片显示「破甲 开」，但模型行为没变 | 当前用的是 `minimal` 预设 | [T4](#t4-开了但没效果) |
 | 点击开关后本轮的回复没变化 | 正常 —— 开关只影响**下一次**请求 | [T5](#t5-点击后本轮没变化) |
+| 点「清洗」没反应，重启也没反应 | `node:fs` 被 Electron 拦截，插件打不开归档（已在 1.1.1 修复） | [T7](#t7-清洗没反应) |
+| 清洗已生效，但模型文字还是旧的 | **正常** —— 宿主只在启动时读那些常量，需重启 | [T7](#t7-清洗没反应) |
 | 关掉破甲后沙箱/审批变了 | 不应该发生（A7 已修）。请报 issue 并附 `status.sources` | [T6](#t6-主开关似乎动了权限) |
 
 ---
@@ -149,7 +151,7 @@ $t = Get-Item "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-armor-swi
 - `includeRuntimeContext: false` → `dsh-persona` 调用 `suppressRuntimeContext()`，
   assemble 的 `contexts` 变成 `[]`，两个 context（order 100/130）也进不去。
 
-**即 `minimal` 下三处注册全部失效。**
+**即 `minimal` 下四个注册面全部失效（含 `preferences`）。**
 
 > 注意：**不是**「只有 context 生效」。早期文档里有过这个错误说法，已更正。
 
@@ -224,6 +226,54 @@ Remove-Item "$env:USERPROFILE\.dsh\plugins\dsh-armor-switch" -Recurse -Force
 ```
 
 **不要**动 `node_modules` 下的其它任何东西 —— 那是 profile 的依赖树。
+
+---
+
+## T7. 清洗没反应
+
+分两种完全不同的情况，先看 `status.hostClean.reason`。
+
+### 7a. `reason` 是 `ENOENT, not found in …/app.asar`
+
+**这是 1.1.1 之前的一个真实缺陷，已在 1.1.1 修复。**
+
+原因：宿主是 Electron 应用，`node:fs` 会拦截所有以 `.asar` 结尾的路径，把路径当归档**内部**
+解析。插件要打开的是归档**本体**，于是：
+
+| 调用 | 结果 |
+|---|---|
+| `fs.statSync('…/app.asar').size` | `0`（虚拟目录） |
+| `fs.openSync('…/app.asar','r+')` | **抛 ENOENT** |
+| `fs.readdirSync('…/app.asar')` | 成功返回条目（证明被当成目录） |
+
+`openAsar` 因此**从未成功过**，异常被 `apply` 的 `try/catch` 吞掉，磁盘一个字节都没动 ——
+表现为「开清洗没反应，重启也没反应」。
+
+**修复**：所有按路径访问归档的调用改走 `electron.original-fs`（绕开归档层），
+纯 Node 下自动退回 `node:fs`。按 fd 操作的调用不受影响。
+
+诊断一行确认：
+
+```powershell
+$env:ELECTRON_RUN_AS_NODE=1
+& "F:\EXE\DeepSeek\DeepSeek Harness.exe" -e "const fs=require('original-fs');console.log(fs.statSync('F:/EXE/DeepSeek/resources/app.asar').size)"
+# 期望：121348951（用 node:fs 会得到 0 或 ENOENT）
+```
+
+### 7b. 清洗已生效，但模型文字还是旧的
+
+**这不是故障，是设计。** 宿主在**进程启动时**就把 `app.asar` 里那些常量读进了内存，
+之后不会重读文件。所以：
+
+| 层面 | 何时变 |
+|---|---|
+| `app.asar` 磁盘字节 | 点清洗**那一刻**（等长原地写） |
+| 模型看到的文字 | **重启 DSH 之后** |
+
+判断当前磁盘状态（只读，不写）：`status.hostClean` 里 `patched: 9` = 已改写；
+`clean: 9` = 官方原样。
+
+> 一句话：**写盘不用重启，读盘要重启。**
 
 ---
 

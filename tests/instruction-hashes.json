@@ -1,0 +1,22 @@
+{
+  "CONTRACT_TEXT": {
+    "file": "src/index.js",
+    "sha256": "34cf0bb0f670ccc192adf19afbc7fe513ddbeb5cda1c19e31e4915c0e2032f1f"
+  },
+  "AUTHORITY_TEXT": {
+    "file": "src/index.js",
+    "sha256": "ac22f07a40ee78fb217751e357505dbabae7824a0d63e79904309809f9f31638"
+  },
+  "MECHANISM_TEXT": {
+    "file": "src/index.js",
+    "sha256": "de3618784b266750a5b17de70b8616a9423214f68048a2cba416b3b70ed990ab"
+  },
+  "BLOCK_BODY": {
+    "file": "src/profile-clean.js",
+    "sha256": "b60611938ca6a9e9468ecfd890180ef965325ad3ee1da67401bf677bbe82285d"
+  },
+  "TARGETS": {
+    "file": "src/host-clean.js",
+    "sha256": "d4d4a094938a3187cae94642d672a27386942361a266aeb2f2c253ccc82032b3"
+  }
+}

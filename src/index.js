@@ -1,7 +1,9 @@
 /**
  * armor-switch — host half.
  *
- * Mechanism (all public Cordis surfaces; no host file is ever touched):
+ * Legacy prompt registrations are retained unchanged. Maintenance startup is
+ * read-only; restoration of recorded disk changes is explicitly user-triggered.
+ * Mechanism of the three prompt registrations:
  *
  * - Three registrations whose `text` is a FUNCTION. The prompt registry calls
  *   `section.text(context)` on every assembly, and both `renderPrompt` and
@@ -25,6 +27,23 @@
  */
 import z from '@deepseek-ai/schemastery'
 import { createHash } from 'node:crypto'
+import { maintenanceStatus, currentProfile, restoreHost, restoreProfile } from './maintenance.js'
+import { readPreferences, savePreferences, preferenceContext } from './preferences.js'
+import {
+  applyHostClean,
+  revertHostClean,
+  hostCleanStatus,
+  inspectHost,
+  manifestPath,
+  readManifest,
+  detectAsar,
+} from './host-clean.js'
+import {
+  applyProfileClean,
+  revertProfileClean,
+  profileCleanStatus,
+  detectProfile,
+} from './profile-clean.js'
 
 /** Cordis plugin name used by Loader diagnostics. */
 export const name = 'dsh-armor-switch'
@@ -48,6 +67,25 @@ export const CONTEXT_MECHANISM = 'armor-switch:mechanism'
 export const Config = z.object({
   enabled: z.boolean().default(false),
   fullAccess: z.boolean().default(false),
+  /**
+   * Rewrite the harness's own hard-coded wording at startup.
+   *
+   * The harness bakes "these instructions are only guidance" and "approval
+   * requests are rejected automatically" into constants with no config key, so
+   * the only way to neutralize them is to rewrite those bytes. Requires a
+   * restart to take effect, because the harness reads its archive at startup.
+   */
+  hostClean: z.boolean().default(false),
+  /** Explicit app.asar path; auto-detected when empty. */
+  asarPath: z.string().default(''),
+  /**
+   * Also pin permissions and the session directive in the current profile's
+   * `cordis.patch.yml`. Unlike the archive rewrite this only edits the profile's
+   * own patch file, and deleting the marked block reverts it exactly.
+   */
+  profileClean: z.boolean().default(false),
+  /** Explicit profile directory; auto-detected when empty. */
+  profilePath: z.string().default(''),
 })
 
 /**
@@ -76,6 +114,106 @@ const state = {
   startupEnabled: false,
   /** Best-effort notes about optional services (persistence, presets). */
   notes: [],
+  /** Last host-clean outcome, surfaced on the chip. */
+  hostClean: null,
+  /** Last profile-clean outcome, surfaced on the chip. */
+  profileClean: null,
+}
+
+/** The configured asar / profile paths ('' means auto-detect). */
+let configuredAsar = ''
+let configuredProfile = ''
+
+/**
+ * Run the host clean at startup, swallowing every failure.
+ *
+ * Why it cannot break the plugin: the harness keeps `app.asar` open while it
+ * runs, so the module only performs equal-length in-place writes at recorded
+ * offsets (a rename or replace would fail with EBUSY). Every target is verified
+ * by anchor and prefix first and skipped on any mismatch, and the restore record
+ * is written before the first byte changes.
+ * @param ctx - plugin context, for the diagnostic log.
+ * @returns a compact outcome for the chip.
+ */
+function runHostClean(ctx) {
+  try {
+    const asar = detectAsar(configuredAsar)
+    if (asar === null) {
+      state.hostClean = { ok: false, reason: 'app.asar not found' }
+      return state.hostClean
+    }
+    const { results, manifest } = applyHostClean(asar, { manifestPath: manifestPath() })
+    const patched = results.filter((r) => r.action === 'patched').length
+    const already = results.filter((r) => r.action === 'already').length
+    const skipped = results.filter((r) => r.action === 'skip')
+    // Re-read the archive so the chip reports the ACTUAL deployed state rather
+    // than only what this run happened to do. A run that found everything
+    // already current is a success, not an anomaly.
+    let deployed = null
+    try {
+      const rows = inspectHost(asar, readManifest(manifestPath()))
+      deployed = {
+        patched: rows.filter((r) => r.state === 'patched').length,
+        clean: rows.filter((r) => r.state === 'clean').length,
+        drifted: rows.filter((r) => r.state === 'drifted' || r.state === 'anchor-miss').length,
+        total: rows.length,
+        rows: rows.map((r) => ({ id: r.id, state: r.state, detail: r.detail })),
+      }
+    } catch {
+      /* the chip simply omits the deployed block */
+    }
+    state.hostClean = {
+      ok: skipped.length === 0,
+      asarPath: asar,
+      patched,
+      already,
+      skipped: skipped.map((r) => `${r.id}: ${r.reason}`),
+      bytes: manifest.asarSize,
+      sizeAfter: manifest.asarSizeAfter,
+      deployed,
+    }
+    ctx?.logger?.info?.(
+      `armor-switch: host clean — ${patched} rewritten, ${already} already current, ${skipped.length} skipped`,
+    )
+  } catch (error) {
+    // A failure here must never stop the contract registrations below.
+    state.hostClean = { ok: false, reason: messageOf(error) }
+    ctx?.logger?.warn?.(`armor-switch: host clean failed (${messageOf(error)})`)
+  }
+  return state.hostClean
+}
+
+/**
+ * Pin permissions and the session directive in the current profile's patch file.
+ *
+ * Kept separate from {@link runHostClean} because it edits a different surface:
+ * the archive rewrite needs a restart to load, while this write decides what the
+ * NEXT session's sandbox, approval policy and persona are. Failures are
+ * swallowed for the same reason.
+ * @param ctx - plugin context, for the diagnostic log.
+ * @returns a compact outcome for the chip.
+ */
+function runProfileClean(ctx) {
+  try {
+    const profileDir = detectProfile(configuredProfile)
+    if (profileDir === null) {
+      state.profileClean = { ok: false, reason: 'profile directory not found' }
+      return state.profileClean
+    }
+    const result = applyProfileClean(profileDir)
+    state.profileClean = {
+      ok: result.action !== 'skip',
+      profileDir,
+      action: result.action,
+      file: result.file,
+      reason: result.reason,
+    }
+    ctx?.logger?.info?.(`armor-switch: profile clean — ${result.action} (${profileDir})`)
+  } catch (error) {
+    state.profileClean = { ok: false, reason: messageOf(error) }
+    ctx?.logger?.warn?.(`armor-switch: profile clean failed (${messageOf(error)})`)
+  }
+  return state.profileClean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -378,22 +516,48 @@ function field(payload, key) {
   return payload?.[key] ?? payload?.args?.[key]
 }
 
-/** Current status payload for the chip. */
+/** This process wrote restored bytes; the loaded modules may still be old. */
+let maintenanceRestartRequired = false
+
+function currentPreferences() {
+  try { return readPreferences(currentProfile(configuredProfile)) }
+  catch (error) { return { ok: false, text: null, revision: null, reason: messageOf(error) } }
+}
+
+/** Fresh disk diagnostics, never cached startup outcomes. */
 function statusPayload() {
   return {
     enabled: state.enabled,
     fullAccess: state.fullAccess,
     startupEnabled: state.startupEnabled,
     contract: contractFingerprint(),
-    sources: [
-      `section ${SECTION_CONTRACT} @2 (system prompt)`,
-      `context ${CONTEXT_AUTHORITY} @100 (runtime context)`,
-      `context ${CONTEXT_MECHANISM} @130 (runtime context)`,
-      COMPLETE_PRESET_NOTE,
-      'permissions: the main switch changes the contract only; it never touches sandbox/approval.',
-      'permissions: fullAccess is applied to live agents ONLY when that field is explicitly sent.',
-      ...state.notes,
-    ],
+    ...maintenanceStatus(configuredAsar, configuredProfile),
+    preferences: currentPreferences(),
+    restartRequired: maintenanceRestartRequired,
+    sources: [COMPLETE_PRESET_NOTE, ...state.notes],
+  }
+}
+
+/** Restore surfaces independently and retain every outcome, including failures. */
+function restoreMaintenance(surfaces) {
+  const outcomes = {}
+  for (const surface of surfaces) {
+    try {
+      outcomes[surface] = surface === 'host'
+        ? restoreHost(configuredAsar)
+        : restoreProfile(currentProfile(configuredProfile))
+    } catch (error) {
+      outcomes[surface] = { ok: false, changed: false, reason: messageOf(error) }
+    }
+    if (outcomes[surface].changed !== false) maintenanceRestartRequired = true
+  }
+  const success = Object.values(outcomes).every((outcome) => outcome.ok === true)
+  const value = { ...statusPayload(), operation: { ok: success, outcomes } }
+  return success ? ok(value) : {
+    ...fail('restore-incomplete', Object.entries(outcomes)
+      .filter(([, outcome]) => !outcome.ok)
+      .map(([surface, outcome]) => `${surface}: ${outcome.reason || 'restoration incomplete'}`).join('; ')),
+    value,
   }
 }
 
@@ -444,9 +608,29 @@ export async function handleRpc(endpoint, payload, context = rpcContext) {
         : []
       return ok(statusPayload())
     }
+    case 'preferencesSave': {
+      try {
+        const result = savePreferences(currentProfile(configuredProfile), field(payload, 'text'), field(payload, 'expectedRevision'))
+        if (!result.ok) return { ...fail(result.code, result.reason), value: statusPayload() }
+        return ok(statusPayload())
+      } catch (error) {
+        return fail('preferences-unavailable', messageOf(error))
+      }
+    }
     case 'recheck':
-      // Read-only refresh: recompute and return status, changing no state.
       return ok(statusPayload())
+    case 'hostInspect':
+      return ok(statusPayload().hostClean)
+    case 'hostRevert':
+      return restoreMaintenance(['host'])
+    case 'profileRevert':
+      return restoreMaintenance(['profile'])
+    case 'revertAll':
+      return restoreMaintenance(['host', 'profile'])
+    case 'hostClean':
+    case 'profileClean':
+    case 'cleanAll':
+      return fail('disabled-action', 'This maintenance release provides diagnostics and restoration only; new disk rewrites are disabled.')
     default:
       return fail('internal', `dsh-armor-switch: unknown endpoint ${JSON.stringify(String(endpoint))}`)
   }
@@ -483,6 +667,15 @@ export function apply(ctx, config) {
   state.enabled = state.startupEnabled
   state.fullAccess = config?.fullAccess === true
   state.notes = []
+  configuredAsar = typeof config?.asarPath === 'string' ? config.asarPath : ''
+  configuredProfile = typeof config?.profilePath === 'string' ? config.profilePath : ''
+
+  // Maintenance startup is read-only, including when legacy cleaning flags are
+  // present. Restoring disk changes must not be undone by the next plugin mount.
+  maintenanceRestartRequired = false
+  state.hostClean = null
+  state.profileClean = null
+  state.notes.push('maintenance: startup performs no disk rewrites; diagnostics and restoration are available on the plugin detail page.')
 
   // Three registrations. Each text is a function re-evaluated on every
   // assembly, so the switch takes effect on the next request with no
@@ -509,7 +702,19 @@ export function apply(ctx, config) {
     text: mechanismText,
   }), 'armor-switch: mechanism context')
 
-  // Private channel: the chip reaches the host switch through Connection RPC.
+  // Ordinary preferences have their own non-interpolated contribution. Their
+  // fixed provenance wrapper never replaces or rewrites the legacy constants.
+  ctx.effect(() => ctx.systemPrompt.section({
+    name: 'armor-switch:preferences',
+    order: 200,
+    interpolate: false,
+    text: () => {
+      try { return preferenceContext(currentProfile(configuredProfile)) }
+      catch { return '' }
+    },
+  }), 'armor-switch: ordinary preferences')
+
+  // Private channel used by the plugin-detail page through Connection RPC.
   ctx.inject(['connection'], (connectionCtx) => {
     const disposeRpc = connectionCtx.connection.rpc.handle(RPC_CHANNEL, (endpoint, payload) =>
       handleRpc(endpoint, payload, ctx))

@@ -1,12 +1,12 @@
 {
   "meta": {
     "title": "Armor switch",
-    "description": "A one-click delivery-contract toggle: off is byte-identical to the stock prompt, on rewrites the underlying contract (no host file is ever modified)."
+    "description": "A reversible delivery-contract switch. Live prompt toggling is instant; host cleaning writes to disk immediately but needs a restart before the model reads it; profile cleaning applies to the next session."
   },
   "chipOn": "Armor on",
   "chipOff": "Armor off",
-  "chipTitleOn": "Armor is on. Click to switch off; the next request reverts to stock.",
-  "chipTitleOff": "Armor is off (byte-identical to stock). Click to switch on.",
+  "chipTitleOn": "Armor is on. Click to switch off; the next request reverts the registration surface to stock.",
+  "chipTitleOff": "Armor is off (registration surface is byte-identical to stock). Click to switch on.",
   "fullAccessOn": "Full",
   "fullAccessOff": "Full",
   "fullAccessTitleOn": "Full access on: danger-full-access, approval never. Click to restore this profile's default preset.",

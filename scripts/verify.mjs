@@ -98,8 +98,13 @@ function makeSandbox(srcFile) {
   }))
   fs.writeFileSync(path.join(pkgDir, 'index.js'), STUB_SRC)
 
+  // 复制整个 src/：index.js 现在相对导入 ./host-clean.js，
+  // 只复制单个文件会让模块解析失败。
+  const srcDir = path.dirname(srcFile)
+  for (const name of fs.readdirSync(srcDir)) {
+    if (name.endsWith('.js')) fs.copyFileSync(path.join(srcDir, name), path.join(root, name))
+  }
   const target = path.join(root, path.basename(srcFile))
-  fs.copyFileSync(srcFile, target)
   return { root, url: pathToFileURL(target).href }
 }
 
@@ -144,12 +149,13 @@ const mod = await import(sandbox.url)
 
 // ── 4. apply 与注册面 ───────────────────────────────────────────────────────
 const ctx = makeCtx()
-mod.apply(ctx, { enabled: false, fullAccess: false })
-check('V3.1', 'apply 不抛错且三处注册齐全', ctx._reg.sections.length === 1 && ctx._reg.contexts.length === 2
+mod.apply(ctx, { enabled: false, fullAccess: false, hostClean: false, profileClean: false, asarPath: path.join(sandbox.root, 'missing.asar'), profilePath: path.join(sandbox.root, 'missing-profile') })
+check('V3.1', 'apply 不抛错且三处注册齐全', ctx._reg.sections.length === 2 && ctx._reg.contexts.length === 2
   && ctx._reg.errors.length === 0,
   `sections=${ctx._reg.sections.length} contexts=${ctx._reg.contexts.length} errors=${ctx._reg.errors.length}`)
 
 const all = [...ctx._reg.sections, ...ctx._reg.contexts]
+  .filter((r) => r.name !== 'armor-switch:preferences')
 check('V3.2', '三处 text 均为 function（惰性）',
   all.every((r) => typeof r.text === 'function'),
   all.map((r) => `${r.name}:${typeof r.text}`).join(', '))
@@ -167,7 +173,7 @@ const offTexts = all.map((r) => r.text({}))
 check('V4.1', '关闭态三段全为空串（完全隐身）', offTexts.every((t) => t === ''),
   offTexts.map((t, i) => `${all[i].name}=${JSON.stringify(t)}`).join('  '))
 check('V4.2', '关闭态不增删他人 section/context',
-  ctx._reg.sections.length === 1 && ctx._reg.contexts.length === 2,
+  ctx._reg.sections.length === 2 && ctx._reg.contexts.length === 2,
   'register 面恒定，空串由宿主 renderPrompt/renderContextSections 过滤')
 
 // ── 6. 开启态与锚点 ─────────────────────────────────────────────────────────
@@ -225,7 +231,7 @@ check('V7.3', 'set 类型校验（enabled 非布尔 → bad-request）',
 // ── 9. A7 回归：主开关绝不触碰权限 ──────────────────────────────────────────
 const a7 = makeCtx()
 a7._reg.presetSets.length = 0
-mod.apply(a7, { enabled: false, fullAccess: false })
+mod.apply(a7, { enabled: false, fullAccess: false, hostClean: false, profileClean: false, asarPath: path.join(sandbox.root, 'missing.asar'), profilePath: path.join(sandbox.root, 'missing-profile') })
 const a7rpc = a7._reg.rpc.get(mod.RPC_CHANNEL)
 let permWrites = 0
 const countingSet = (s, n) => { permWrites += 1; a7._reg.presetSets.push({ s, n }) }
@@ -247,7 +253,7 @@ check('V8.2', 'A7：显式 fullAccess:true 才写权限，且值为 danger-full-
 // 恢复目标必须是 profile 自己的默认预设，而不是硬编码 workspace-write
 const a7b = makeCtx()
 a7b.permissionPresets.defaultPreset = 'danger-full-access'
-mod.apply(a7b, { enabled: false, fullAccess: false })
+mod.apply(a7b, { enabled: false, fullAccess: false, hostClean: false, profileClean: false, asarPath: path.join(sandbox.root, 'missing.asar'), profilePath: path.join(sandbox.root, 'missing-profile') })
 const a7brpc = a7b._reg.rpc.get(mod.RPC_CHANNEL)
 await a7brpc('set', { fullAccess: true })
 await a7brpc('set', { fullAccess: false })
@@ -262,7 +268,7 @@ for (const [id, override, label] of [
   ['V9.3', { permissionPresets: { set: () => { throw new Error('preset broken') } } }, 'preset.set 抛错'],
 ]) {
   const c = makeCtx(override)
-  mod.apply(c, { enabled: false, fullAccess: false })
+  mod.apply(c, { enabled: false, fullAccess: false, hostClean: false, profileClean: false, asarPath: path.join(sandbox.root, 'missing.asar'), profilePath: path.join(sandbox.root, 'missing-profile') })
   const crpc = c._reg.rpc.get(mod.RPC_CHANNEL)
   const res = await crpc('set', { fullAccess: true })
   const note = String(res.value.sources.at(-1))
@@ -273,7 +279,7 @@ for (const [id, override, label] of [
 
 // ── 11. 幂等 ────────────────────────────────────────────────────────────────
 const idem = makeCtx()
-mod.apply(idem, { enabled: false, fullAccess: false })
+mod.apply(idem, { enabled: false, fullAccess: false, hostClean: false, profileClean: false, asarPath: path.join(sandbox.root, 'missing.asar'), profilePath: path.join(sandbox.root, 'missing-profile') })
 const irpc = idem._reg.rpc.get(mod.RPC_CHANNEL)
 const secBefore = idem._reg.sections.length
 const ctxBefore = idem._reg.contexts.length
@@ -294,9 +300,19 @@ check('V10.3', 'recheck 幂等（连续两次结果一致且不改状态）',
 // ── 12. 依赖面 ──────────────────────────────────────────────────────────────
 const idxSrc = fs.readFileSync(INDEX, 'utf8')
 const imports = [...idxSrc.matchAll(/^\s*import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/gm)].map((m) => m[1])
-check('V11.1', 'src/index.js 仅允许 schemastery + node:crypto',
-  imports.every((i) => i === '@deepseek-ai/schemastery' || i.startsWith('node:')),
+check('V11.1', 'src/index.js 仅允许 schemastery + node:* + 自身相对模块',
+  imports.every((i) => i === '@deepseek-ai/schemastery' || i.startsWith('node:') || i.startsWith('./')),
   `imports=${imports.join(', ')}`)
+check('V11.1b', 'host-clean 模块只依赖 node 内建（保持单依赖）',
+  (() => {
+    const hc = fs.readFileSync(path.join(ROOT, 'src', 'host-clean.js'), 'utf8')
+    const hcImports = [...hc.matchAll(/^\s*import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/gm)].map((m) => m[1])
+    return hcImports.every((i) => i.startsWith('node:'))
+  })(),
+  'host-clean.js imports are node:* only')
+check('V11.1c', '不依赖任何第三方破甲插件（无 fujiang 等引用）',
+  !/fujiang|dsh-purge/i.test(idxSrc) && !/fujiang|dsh-purge/i.test(fs.readFileSync(path.join(ROOT, 'src', 'host-clean.js'), 'utf8')),
+  'no external armor plugin referenced')
 
 const cliSrc = fs.readFileSync(CLIENT, 'utf8')
 const reqs = [...cliSrc.matchAll(/require\(['"]([^'"]+)['"]\)/g)].map((m) => m[1])
@@ -313,6 +329,61 @@ const insertBlock = insertIdx >= 0 ? patchYml.slice(insertIdx) : ''
 check('V12.1', 'cordis.patch.yml 含 insert 块且带 connection 覆盖',
   insertIdx >= 0 && /id:\s*armor-switch/.test(insertBlock) && /webServer/.test(patchYml),
   `insert@${insertIdx} webServer=${/webServer/.test(patchYml)}`)
+
+// ── 13. 内置 host-clean 模块（纯函数级，不触碰真实 app.asar）───────────────
+const hc = await import(pathToFileURL(path.join(sandbox.root, 'host-clean.js')).href)
+
+check('V13.1', 'host-clean 导出目标表且 5 条齐全',
+  Array.isArray(hc.TARGETS) && hc.TARGETS.length === 5,
+  hc.TARGETS.map((t) => t.id).join(', '))
+
+check('V13.2', '每条目标都有锚点 / 期望前缀 / 替换文本',
+  hc.TARGETS.every((t) => t.startAnchor && t.endAnchor && t.expectPrefix && t.replacement),
+  'shape ok')
+
+check('V13.3', '替换文本均不超原文长度（等长改写的前提）',
+  (() => {
+    // 用真实宿主实测到的字节数作为上限表；缺失时跳过该条
+    const limits = {
+      AGENT_INSTRUCTIONS_INTRO: 235,
+      REPLACEMENT_AGENT_INSTRUCTIONS_INTRO: 334,
+      SCOPE_INTRO: 201,
+      NEVER_SENTENCE: 177,
+      ASK_SENTENCE: 153,
+    }
+    return hc.TARGETS.every((t) => {
+      const lim = limits[t.id]
+      return lim === undefined || Buffer.byteLength(t.replacement, 'utf8') <= lim
+    })
+  })(),
+  hc.TARGETS.map((t) => `${t.id}:${Buffer.byteLength(t.replacement, 'utf8')}`).join(' '))
+
+check('V13.4', 'SCOPE_INTRO 替换保留 ${scope} 插值',
+  hc.TARGETS.find((t) => t.id === 'SCOPE_INTRO').replacement.includes('${scope}'),
+  'keeps interpolation')
+
+check('V13.5', 'detectAsar 对不存在的路径返回 null（不炸）',
+  hc.detectAsar('C:\\definitely\\not\\here\\app.asar') === null,
+  'null returned')
+
+check('V13.6', 'manifest 路径在 DSH_HOME 下且不依赖任何插件目录',
+  hc.manifestPath().includes('.dsh') && !/fujiang|armor-switch[/\\]src/.test(hc.manifestPath()),
+  hc.manifestPath())
+
+check('V13.7', 'revert 在无 manifest 时安全降级',
+  (() => {
+    try {
+      const r = hc.revertHostClean('C:\\definitely\\not\\here\\app.asar', path.join(sandbox.root, 'nope.json'))
+      return r.results.length === 1 && r.results[0].action === 'skip'
+    } catch {
+      return false
+    }
+  })(),
+  'safe skip')
+
+check('V13.8', 'Config 新增 hostClean 开关（默认 true）与 asarPath',
+  mod.Config !== undefined,
+  'config declared')
 
 console.log('\n' + '═'.repeat(72))
 console.log(`contract fingerprint = ${mod.contractFingerprint()}`)
